@@ -7,9 +7,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class CredentialStore @Inject constructor(configHandler: ConfigHandler) {
+class CredentialStore @Inject constructor(private val configHandler: ConfigHandler) {
     private var moodleUsername: String? = null
     private var moodlePassword: String? = null
+    private var moodleCookie: String? = null
     private var emailAddress: String? = null
     private var emailUsername: String? = null
     private var emailPassword: String? = null
@@ -20,6 +21,7 @@ class CredentialStore @Inject constructor(configHandler: ConfigHandler) {
         moodlePassword = configHandler.getMoodlePassword()
         emailAddress = configHandler.getEmailAddress()
         emailUsername = configHandler.getEmailUsername()
+        emailPassword = configHandler.getEmailPassword()
     }
 
     fun getMoodleUsername(): String {
@@ -36,7 +38,16 @@ class CredentialStore @Inject constructor(configHandler: ConfigHandler) {
 
     fun getMoodlePassword(): String {
         // return moodlePassword ?: promptTextInput("Enter moodle password ($moodleUsername):").also { moodlePassword = it }
-        return moodlePassword ?: promptPasswordInput("Enter moodle password ($moodleUsername):").also { moodlePassword = it }
+        return moodlePassword ?: promptPasswordInput("Enter moodle password ($moodleUsername):").also {
+            moodlePassword = it
+        }
+    }
+
+    fun getMoodleCookie(): String {
+        return moodleCookie
+            ?: promptTextInput("Enter authorization cookie value (${configHandler.getMoodleCookieName()}):").also {
+                moodleCookie = it
+            }
     }
 
     fun getEmailPassword(): String {
@@ -44,7 +55,7 @@ class CredentialStore @Inject constructor(configHandler: ConfigHandler) {
         return emailPassword ?: promptPasswordInput("Enter email password:").also { emailPassword = it }
     }
 
-    fun setEmailPassword(pw: String){
-        emailPassword = pw
+    fun setEmailPassword(value: String?) {
+        emailPassword = value
     }
 }

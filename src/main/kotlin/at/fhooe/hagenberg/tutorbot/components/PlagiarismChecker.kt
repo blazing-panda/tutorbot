@@ -12,23 +12,38 @@ class PlagiarismChecker @Inject constructor(
     private val configHandler: ConfigHandler
 ) {
 
-    fun generatePlagiarismReport(submissionDirectory: File) {
+    fun generatePlagiarismReport(submissionDirectory: File, outputDirectory: File) {
         val language = detectSubmissionLanguage(submissionDirectory)
-        val reportDirectory = File(submissionDirectory, "plagiarism-report")
-        val args = arrayOf("-l", language, "-r", reportDirectory.absolutePath, "-s", submissionDirectory.absolutePath)
+        val reportDirectory = File(outputDirectory, REPORT_FOLDER)
+        reportDirectory.mkdirs()
+        val logFile = File(reportDirectory, LOG_FILE)
+
+        // With subdirs (-s) verbose parser logging (-vp) and output to log file (-o)
+        val args = arrayOf(
+            "-l",
+            language,
+            "-r",
+            reportDirectory.absolutePath,
+            "-vp",
+            "-o",
+            logFile.absolutePath,
+            "-s",
+            submissionDirectory.absolutePath
+        )
 
         // Capture output while running JPlag
         runWithCapturedOutput {
             jplagWrapper.run(args)
         }
-        val reportFilePath = File(reportDirectory, "index.html").absolutePath
+
+        val reportFilePath = File(reportDirectory, INDEX_FILE).absolutePath
         println("Plagiarism output generated, you can check it here: $reportFilePath")
     }
 
     private fun detectSubmissionLanguage(submissionDirectory: File): String {
         val extensions = submissionDirectory.walkTopDown().filter(File::isFile).map { file -> file.extension }
         return when {
-            extensions.contains("java") -> configHandler.getJavaLanguageLevel() ?: "java19"
+            extensions.contains("java") -> configHandler.getJavaLanguageLevel()
             extensions.contains("cpp") || extensions.contains("h") || extensions.contains("c") -> "c/c++"
             else -> exitWithError("Could not detect programming language for plagiarism detection")
         }
@@ -38,5 +53,11 @@ class PlagiarismChecker @Inject constructor(
         fun run(args: Array<String>) {
             Program(CommandLineOptions(args)).run()
         }
+    }
+
+    companion object {
+        const val REPORT_FOLDER = "plagiarism-report"
+        const val LOG_FILE = "parser.log"
+        const val INDEX_FILE = "index.html"
     }
 }

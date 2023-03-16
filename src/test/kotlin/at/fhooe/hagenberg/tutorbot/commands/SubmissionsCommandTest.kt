@@ -1,6 +1,5 @@
 package at.fhooe.hagenberg.tutorbot.commands
 
-import at.fhooe.hagenberg.tutorbot.auth.CredentialStore
 import at.fhooe.hagenberg.tutorbot.auth.MoodleAuthenticator
 import at.fhooe.hagenberg.tutorbot.components.BatchProcessor
 import at.fhooe.hagenberg.tutorbot.components.ConfigHandler
@@ -8,14 +7,11 @@ import at.fhooe.hagenberg.tutorbot.components.PlagiarismChecker
 import at.fhooe.hagenberg.tutorbot.components.Unzipper
 import at.fhooe.hagenberg.tutorbot.network.MoodleClient
 import at.fhooe.hagenberg.tutorbot.testutil.CommandLineTest
-import at.fhooe.hagenberg.tutorbot.testutil.assertThrows
 import at.fhooe.hagenberg.tutorbot.testutil.getHtmlResource
 import at.fhooe.hagenberg.tutorbot.testutil.getResource
 import at.fhooe.hagenberg.tutorbot.testutil.rules.FileSystemRule
-import at.fhooe.hagenberg.tutorbot.util.ProgramExitError
 import io.mockk.*
-import okhttp3.OkHttpClient
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -23,6 +19,10 @@ import java.io.File
 import java.nio.file.Path
 
 class SubmissionsCommandTest : CommandLineTest() {
+    private val testFileName = "S1-S2_S1-S2.pdf"
+    private val submissionsLoc = "submissions"
+    private val exerciseLoc = "ue01"
+
     private val moodleClient = mockk<MoodleClient> {
         every { getHtmlDocument("www.assignment.com") } returns getHtmlResource("websites/Assignment.html")
         every { getHtmlDocument("www.assignment.com/submission") } returns getHtmlResource("websites/Submission.html")
@@ -30,27 +30,27 @@ class SubmissionsCommandTest : CommandLineTest() {
     private val unzipper = Unzipper()
     private val plagiarismChecker = mockk<PlagiarismChecker>()
     private val batchProcessor = BatchProcessor()
-    private val configHandler = mockk<ConfigHandler> {
-        every { getSubmissionsDirectoryFromConfig() } returns null
+    private val configHandler = mockk<ConfigHandler>() {
+        every { getExerciseSubDir() } returns exerciseLoc
+        every { getSubmissionsSubDir() } returns submissionsLoc
     }
-    private fun getSubmissionsDirectoryFromConfig(): String? {
-        return Path.of(configHandler.getBaseDir(), configHandler.getExerciseSubDir(), configHandler.getSubmissionsSubDir()).toString();
-    }
-
-    private val http = OkHttpClient()
-    private val credentialStore = mockk<CredentialStore> {
-        every { getMoodleUsername() } returns "moodle-username"
-        every { getEmailPassword() } returns "moodle-password"
-    }
-    private val moodleAuthenticator = MoodleAuthenticator(http, credentialStore, configHandler)
-
-    private val submissionsCommand = SubmissionsCommand(moodleClient, unzipper, plagiarismChecker, batchProcessor, configHandler, moodleAuthenticator)
+    private val moodleAuthenticator = mockk<MoodleAuthenticator>()
+    private val submissionsCommand = SubmissionsCommand(
+        moodleClient,
+        unzipper,
+        plagiarismChecker,
+        batchProcessor,
+        configHandler,
+        moodleAuthenticator
+    )
 
     @get:Rule
     val fileSystem = FileSystemRule()
 
     @Before
     fun setup() {
+        every { configHandler.getBaseDir() } returns fileSystem.directory.absolutePath.toString()
+
         val fileSlot = slot<File>() // Download files from resources
         every { moodleClient.downloadFile(any(), capture(fileSlot)) } answers {
             val file = getResource("zip/${fileSlot.captured.name}")
@@ -60,16 +60,7 @@ class SubmissionsCommandTest : CommandLineTest() {
 
     @Test
     fun `Submissions are downloaded correctly`() {
-        systemIn.provideLines(fileSystem.directory.absolutePath, "Yes", "www.assignment.com", "Yes", "Yes", "Yes")
-
-        submissionsCommand.execute()
-        verifySubmissions()
-    }
-
-    @Test
-    fun `Submissions directory is read from config`() {
-        every { getSubmissionsDirectoryFromConfig() } returns fileSystem.directory.absolutePath
-        systemIn.provideLines("Yes", "www.assignment.com", "Yes", "Yes", "Yes")
+        systemIn.provideLines("www.assignment.com", "Y", "Y", "Y")
 
         submissionsCommand.execute()
         verifySubmissions()
@@ -77,7 +68,7 @@ class SubmissionsCommandTest : CommandLineTest() {
 
     @Test
     fun `Archives are not deleted if not confirmed`() {
-        systemIn.provideLines(fileSystem.directory.absolutePath, "Yes", "www.assignment.com", "No", "Yes", "Yes")
+        systemIn.provideLines("www.assignment.com", "N", "Y", "Y")
 
         submissionsCommand.execute()
         verifySubmissions(archiveExists = true)
@@ -85,7 +76,7 @@ class SubmissionsCommandTest : CommandLineTest() {
 
     @Test
     fun `Plagiarism is not checked if not confirmed`() {
-        systemIn.provideLines(fileSystem.directory.absolutePath, "Yes", "www.assignment.com", "Yes", "No", "Yes")
+        systemIn.provideLines("www.assignment.com", "Y", "N", "Y")
 
         submissionsCommand.execute()
         confirmVerified(plagiarismChecker)
@@ -93,24 +84,17 @@ class SubmissionsCommandTest : CommandLineTest() {
 
     @Test
     fun `Submissions are not deleted if not confirmed`() {
-        systemIn.provideLines(fileSystem.directory.absolutePath, "Yes", "www.assignment.com", "Yes", "Yes", "No")
+        systemIn.provideLines("www.assignment.com", "Y", "Y", "N")
 
         submissionsCommand.execute()
         verifySubmissions(submissionExists = true)
     }
 
-    @Test
-    fun `Program exits if the submissions directory is not valid`() {
-        systemIn.provideLines(fileSystem.file.absolutePath)
-        assertThrows<ProgramExitError> { submissionsCommand.execute() }
-
-        systemIn.provideLines(fileSystem.directory.absolutePath, "No")
-        assertThrows<ProgramExitError> { submissionsCommand.execute() }
-    }
-
     private fun verifySubmissions(archiveExists: Boolean = false, submissionExists: Boolean = false) {
-        verify { plagiarismChecker.generatePlagiarismReport(fileSystem.directory) }
-        assertEquals(archiveExists, File(fileSystem.directory, "submission.zip").exists())
-        assertEquals(submissionExists, File(fileSystem.directory, "submission/submission.pdf").exists())
+        val submissionsLoc = Path.of(fileSystem.directory.absolutePath, exerciseLoc, submissionsLoc).toFile()
+        val outputLoc = Path.of(fileSystem.directory.absolutePath, exerciseLoc).toFile()
+        verify { plagiarismChecker.generatePlagiarismReport(submissionsLoc, outputLoc) }
+        assertEquals(archiveExists, File(submissionsLoc, "submission.zip").exists())
+        assertEquals(submissionExists, File(submissionsLoc, "submission/submission.pdf").exists())
     }
 }
